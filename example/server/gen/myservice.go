@@ -5,7 +5,7 @@ package gen
 import (
 	"context"
 	"encoding/xml"
-	"github.com/hooklift/gowsdl/soap"
+	"github.com/canerc/gowsdl/soap"
 	"time"
 )
 
@@ -64,7 +64,7 @@ func NewMNBArfolyamServiceType(client *soap.Client) MNBArfolyamServiceType {
 
 func (service *mNBArfolyamServiceType) GetInfoSoapContext(ctx context.Context, request *GetInfo) (*GetInfoResponse, error) {
 	response := new(GetInfoResponse)
-	err := service.client.CallContext(ctx, "''", request, response)
+	err := service.client.CallContext(ctx, "''", request, response, "")
 	if err != nil {
 		return nil, err
 	}

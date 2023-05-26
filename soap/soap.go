@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -29,7 +30,7 @@ type SOAPEnvelopeResponse struct {
 }
 
 type SOAPEnvelope struct {
-	XMLName xml.Name `xml:"soap:Envelope"`
+	XMLName xml.Name `xml:"soapenv:Envelope"`
 	XmlNS   string   `xml:"xmlns:soap,attr"`
 
 	Header *SOAPHeader
@@ -37,7 +38,7 @@ type SOAPEnvelope struct {
 }
 
 type SOAPHeader struct {
-	XMLName xml.Name `xml:"soap:Header"`
+	XMLName xml.Name `xml:"soapenv:Header"`
 
 	Headers []interface{}
 }
@@ -48,7 +49,7 @@ type SOAPHeaderResponse struct {
 }
 
 type SOAPBody struct {
-	XMLName xml.Name `xml:"soap:Body"`
+	XMLName xml.Name `xml:"soapenv:Body"`
 
 	Content interface{} `xml:",omitempty"`
 
@@ -187,11 +188,12 @@ func (e *HTTPError) Error() string {
 
 const (
 	// Predefined WSS namespaces to be used in
-	WssNsWSSE       string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
-	WssNsWSU        string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
-	WssNsType       string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText"
-	mtomContentType string = `multipart/related; start-info="application/soap+xml"; type="application/xop+xml"; boundary="%s"`
-	XmlNsSoapEnv    string = "http://schemas.xmlsoap.org/soap/envelope/"
+	WssNsWSSE           string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd"
+	WssNsWSU            string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd"
+	WssNsType           string = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText"
+	mtomContentType     string = `multipart/related; start-info="application/soap+xml"; type="application/xop+xml"; boundary="%s"`
+	XmlNsSoapEnv        string = "http://schemas.xmlsoap.org/soap/envelope/"
+	XmlNsSoapEnvReplace string = "xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\""
 )
 
 type WSSSecurityHeader struct {
@@ -379,14 +381,14 @@ func (s *Client) SetHeaders(headers ...interface{}) {
 }
 
 // CallContext performs HTTP POST request with a context
-func (s *Client) CallContext(ctx context.Context, soapAction string, request, response interface{}) error {
-	return s.call(ctx, soapAction, request, response, nil, nil)
+func (s *Client) CallContext(ctx context.Context, soapAction string, request, response interface{}, replaceSoapNs string) error {
+	return s.call(ctx, soapAction, request, response, nil, nil, replaceSoapNs)
 }
 
 // Call performs HTTP POST request.
 // Note that if the server returns a status code >= 400, a HTTPError will be returned
 func (s *Client) Call(soapAction string, request, response interface{}) error {
-	return s.call(context.Background(), soapAction, request, response, nil, nil)
+	return s.call(context.Background(), soapAction, request, response, nil, nil, "")
 }
 
 // CallContextWithAttachmentsAndFaultDetail performs HTTP POST request.
@@ -394,13 +396,13 @@ func (s *Client) Call(soapAction string, request, response interface{}) error {
 // On top the attachments array will be filled with attachments returned from the SOAP request.
 func (s *Client) CallContextWithAttachmentsAndFaultDetail(ctx context.Context, soapAction string, request,
 	response interface{}, faultDetail FaultError, attachments *[]MIMEMultipartAttachment) error {
-	return s.call(ctx, soapAction, request, response, faultDetail, attachments)
+	return s.call(ctx, soapAction, request, response, faultDetail, attachments, "")
 }
 
 // CallContextWithFault performs HTTP POST request.
 // Note that if SOAP fault is returned, it will be stored in the error.
 func (s *Client) CallContextWithFaultDetail(ctx context.Context, soapAction string, request, response interface{}, faultDetail FaultError) error {
-	return s.call(ctx, soapAction, request, response, faultDetail, nil)
+	return s.call(ctx, soapAction, request, response, faultDetail, nil, "")
 }
 
 // CallWithFaultDetail performs HTTP POST request.
@@ -408,11 +410,11 @@ func (s *Client) CallContextWithFaultDetail(ctx context.Context, soapAction stri
 // the passed in fault detail is expected to implement FaultError interface,
 // which allows to condense the detail into a short error message.
 func (s *Client) CallWithFaultDetail(soapAction string, request, response interface{}, faultDetail FaultError) error {
-	return s.call(context.Background(), soapAction, request, response, faultDetail, nil)
+	return s.call(context.Background(), soapAction, request, response, faultDetail, nil, "")
 }
 
 func (s *Client) call(ctx context.Context, soapAction string, request, response interface{}, faultDetail FaultError,
-	retAttachments *[]MIMEMultipartAttachment) error {
+	retAttachments *[]MIMEMultipartAttachment, replaceSoapNs string) error {
 	// SOAP envelope capable of namespace prefixes
 	envelope := SOAPEnvelope{
 		XmlNS: XmlNsSoapEnv,
@@ -484,6 +486,20 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 		client = &http.Client{Timeout: s.opts.contimeout, Transport: tr}
 	}
 
+	if replaceSoapNs != "" {
+
+		b, _ := ioutil.ReadAll(req.Body)
+
+		myString := string(b[:])
+
+		newBody := strings.Replace(myString, XmlNsSoapEnvReplace, replaceSoapNs, 1)
+
+		req.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(newBody)))
+
+		req.ContentLength = int64(len(newBody))
+
+	}
+
 	res, err := client.Do(req)
 	if err != nil {
 		return err
@@ -514,7 +530,7 @@ func (s *Client) call(ctx context.Context, soapAction string, request, response 
 	}
 
 	var mmaBoundary string
-	if s.opts.mma{
+	if s.opts.mma {
 		mmaBoundary, err = getMmaHeader(res.Header.Get("Content-Type"))
 		if err != nil {
 			return err
